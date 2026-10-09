@@ -1,27 +1,20 @@
-import React, { useState } from 'react';
-import { X, Sparkles, Plus, Shirt, Check, Palette } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Sparkles, Plus, Shirt } from 'lucide-react';
 import { ClosetItem, SizeCategory } from '../types';
+import { enxovalService } from '../services/enxovalService';
 
 interface ClosetModalProps {
   onClose: () => void;
   babyName: string;
+  babyId: string;
 }
 
-const INITIAL_CLOSET: ClosetItem[] = [
-  { id: 'c1', name: 'Body manga longa suedine', type: 'Body', size: 'RN', color: 'Branco', status: 'comprado', createdAt: '2026-02-01' },
-  { id: 'c2', name: 'Body estampado ursinho', type: 'Body', size: 'RN', color: 'Bege', status: 'presente', createdAt: '2026-02-02' },
-  { id: 'c3', name: 'Macacão plush com pezinho', type: 'Macacão', size: 'RN', color: 'Cinza mescla', status: 'comprado', createdAt: '2026-02-03' },
-  { id: 'c4', name: 'Calça mijão vira-pé', type: 'Calça', size: 'RN', color: 'Branco', status: 'presente', createdAt: '2026-02-03' },
-  { id: 'c5', name: 'Body manga curta canelado', type: 'Body', size: 'P', color: 'Amarelo claro', status: 'presente', createdAt: '2026-02-04' },
-  { id: 'c6', name: 'Macacão zíper duplo', type: 'Macacão', size: 'P', color: 'Verde sálvia', status: 'comprado', createdAt: '2026-02-05' },
-  { id: 'c7', name: 'Conjuntinho moletom leve', type: 'Conjunto', size: 'M', color: 'Azul bebê', status: 'presente', createdAt: '2026-02-06' },
-];
-
-export const ClosetModal: React.FC<ClosetModalProps> = ({ onClose, babyName }) => {
-  const [closetList, setClosetList] = useState<ClosetItem[]>(INITIAL_CLOSET);
+export const ClosetModal: React.FC<ClosetModalProps> = ({ onClose, babyName, babyId }) => {
+  const [closetList, setClosetList] = useState<ClosetItem[]>([]);
   const [selectedSize, setSelectedSize] = useState<SizeCategory>('RN');
   const [suggestedLook, setSuggestedLook] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Form state for adding new clothing
   const [newType, setNewType] = useState('Body manga curta');
@@ -29,15 +22,28 @@ export const ClosetModal: React.FC<ClosetModalProps> = ({ onClose, babyName }) =
   const [newColor, setNewColor] = useState('Branco');
   const [newStatus, setNewStatus] = useState<'comprado' | 'presente' | 'emprestado'>('comprado');
 
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      const items = await enxovalService.getCloset(babyId);
+      if (mounted) {
+        setClosetList(items);
+        setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [babyId]);
+
   const filteredItems = closetList.filter(item => item.size === selectedSize);
 
   const handleGenerateLook = () => {
     setSuggestedLook(
-      `Look do dia montado para ${babyName} (${selectedSize}):\n• Body manga longa (algodão macio)\n• Macacão plush quentinho com zíper duplo\n• Meias com punho suave e touquinha`
+      `Look do dia montado para ${babyName} (${selectedSize}):\n• Body manga longa suedine macio\n• Macacão plush quentinho com zíper duplo\n• Meias com punho suave e touquinha`
     );
   };
 
-  const handleSaveItem = () => {
+  const handleSaveItem = async () => {
     const newItem: ClosetItem = {
       id: `cloth-${Date.now()}`,
       name: `${newType} (${newColor})`,
@@ -47,8 +53,9 @@ export const ClosetModal: React.FC<ClosetModalProps> = ({ onClose, babyName }) =
       status: newStatus,
       createdAt: new Date().toISOString()
     };
-    setClosetList([newItem, ...closetList]);
+    setClosetList(prev => [newItem, ...prev]);
     setIsAdding(false);
+    await enxovalService.addClosetItem(babyId, newItem);
   };
 
   const sizes: SizeCategory[] = ['RN', 'P', 'M', 'G', 'GG'];
@@ -63,7 +70,7 @@ export const ClosetModal: React.FC<ClosetModalProps> = ({ onClose, babyName }) =
               Armário Virtual
             </span>
             <h2 className="font-heading italic text-2xl font-bold text-baby-dark">
-              Roupinhas da {babyName}
+              Roupinhas de {babyName}
             </h2>
           </div>
           <button
@@ -137,7 +144,11 @@ export const ClosetModal: React.FC<ClosetModalProps> = ({ onClose, babyName }) =
 
         {/* Clothing Items Grid */}
         <div className="my-4 space-y-2">
-          {filteredItems.length === 0 ? (
+          {loading ? (
+            <div className="text-center py-6 text-baby-muted text-xs">
+              Carregando armário...
+            </div>
+          ) : filteredItems.length === 0 ? (
             <div className="text-center py-8 text-baby-muted text-xs">
               Nenhuma peça cadastrada no tamanho {selectedSize} ainda.
             </div>

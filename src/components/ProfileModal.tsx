@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { X, Calendar, MapPin, User, Check } from 'lucide-react';
-import { BabyProfile } from '../types';
+import { X, Calendar, MapPin, User, Check, Trash2 } from 'lucide-react';
+import { BabyProfile, Gender } from '../types';
 
 interface ProfileModalProps {
   currentBaby: BabyProfile;
   onSave: (updatedBaby: BabyProfile) => void;
+  onDelete?: (babyId: string) => void;
   onClose: () => void;
   isNewBaby?: boolean;
 }
@@ -12,6 +13,7 @@ interface ProfileModalProps {
 export const ProfileModal: React.FC<ProfileModalProps> = ({
   currentBaby,
   onSave,
+  onDelete,
   onClose,
   isNewBaby = false,
 }) => {
@@ -19,6 +21,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [dueDate, setDueDate] = useState(currentBaby.dueDate);
   const [city, setCity] = useState(currentBaby.city);
   const [state, setState] = useState(currentBaby.state);
+  const [gender, setGender] = useState<Gender>(currentBaby.gender || 'neutral');
   const [gestationalWeek, setGestationalWeek] = useState(currentBaby.gestationalWeek || 32);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -32,6 +35,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       dueDate,
       city: city.trim(),
       state: state.trim().toUpperCase(),
+      gender,
       gestationalWeek: Number(gestationalWeek),
     });
     onClose();
@@ -39,7 +43,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
-      <div className="bg-white w-full sm:max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 shadow-pop animate-slide-up">
+      <div className="bg-white w-full sm:max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 shadow-pop animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-lavender-100">
           <div>
             <span className="text-[10px] font-extrabold uppercase tracking-widest text-lavender-700">
@@ -72,6 +76,47 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 className="w-full bg-lavender-50/80 border border-lavender-200 rounded-xl px-3.5 py-2.5 text-xs text-baby-dark pl-9 focus:outline-none focus:ring-2 focus:ring-lavender-400"
               />
               <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-lavender-600" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-baby-dark mb-1">
+              Sexo do bebê
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setGender('girl')}
+                className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
+                  gender === 'girl'
+                    ? 'bg-pink-50 border-pink-300 text-pink-700'
+                    : 'border-baby-border text-baby-muted hover:bg-lavender-50'
+                }`}
+              >
+                🌸 Menina
+              </button>
+              <button
+                type="button"
+                onClick={() => setGender('boy')}
+                className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
+                  gender === 'boy'
+                    ? 'bg-sky-50 border-sky-300 text-sky-700'
+                    : 'border-baby-border text-baby-muted hover:bg-lavender-50'
+                }`}
+              >
+                🍼 Menino
+              </button>
+              <button
+                type="button"
+                onClick={() => setGender('neutral')}
+                className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
+                  gender === 'neutral'
+                    ? 'bg-lavender-100 border-lavender-300 text-lavender-800'
+                    : 'border-baby-border text-baby-muted hover:bg-lavender-50'
+                }`}
+              >
+                ✨ Neutro
+              </button>
             </div>
           </div>
 
@@ -123,7 +168,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 value={state}
                 onChange={e => setState(e.target.value)}
                 placeholder="SP"
-                className="w-full bg-lavender-50/80 border border-lavender-200 rounded-xl px-3 py-2.5 text-xs text-baby-dark text-center font-bold focus:outline-none focus:ring-2 focus:ring-lavender-400"
+                className="w-full bg-lavender-50/80 border border-lavender-200 rounded-xl px-3 py-2.5 text-xs text-baby-dark text-center font-bold focus:outline-none focus:ring-2 focus:ring-lavender-400 uppercase"
               />
             </div>
           </div>
@@ -142,21 +187,39 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             />
           </div>
 
-          <div className="pt-2 flex items-center gap-2">
-            <button
-              type="submit"
-              className="flex-1 py-3 rounded-2xl bg-lavender-700 hover:bg-lavender-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
-            >
-              <Check size={16} />
-              <span>Salvar perfil e atualizar enxoval</span>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-3 rounded-2xl text-xs font-bold text-baby-muted hover:text-baby-dark"
-            >
-              Cancelar
-            </button>
+          <div className="pt-2 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                className="flex-1 py-3 rounded-2xl bg-lavender-700 hover:bg-lavender-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
+              >
+                <Check size={16} />
+                <span>Salvar perfil</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-3 rounded-2xl text-xs font-bold text-baby-muted hover:text-baby-dark"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            {!isNewBaby && onDelete && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Tem certeza que deseja remover o bebê "${currentBaby.name}"? Todos os itens desse bebê serão excluídos.`)) {
+                    onDelete(currentBaby.id);
+                    onClose();
+                  }
+                }}
+                className="w-full py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl flex items-center justify-center gap-1.5 transition-colors border border-rose-200"
+              >
+                <Trash2 size={14} />
+                <span>Excluir este bebê</span>
+              </button>
+            )}
           </div>
         </form>
       </div>

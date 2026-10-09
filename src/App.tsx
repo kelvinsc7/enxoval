@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import { CATEGORIES } from './data/categories';
-import { INITIAL_ENXOVAL_ITEMS } from './data/initialEnxovalData';
 import { BabyProfile, EnxovalItem, SubItem } from './types';
 import { HeaderNav } from './components/HeaderNav';
 import { HeroProgressCard } from './components/HeroProgressCard';
@@ -13,41 +12,27 @@ import { ChaDeBebeModal } from './components/ChaDeBebeModal';
 import { LiaChatModal } from './components/LiaChatModal';
 import { ProfileModal } from './components/ProfileModal';
 import { SearchModal } from './components/SearchModal';
-
-const DEFAULT_BABIES: BabyProfile[] = [
-  {
-    id: 'baby-aurora',
-    name: 'Aurora',
-    dueDate: '2027-02-15',
-    city: 'Curitiba',
-    state: 'PR',
-    gender: 'girl',
-    gestationalWeek: 32,
-  },
-  {
-    id: 'baby-theo',
-    name: 'Theo',
-    dueDate: '2027-06-20',
-    city: 'São Paulo',
-    state: 'SP',
-    gender: 'boy',
-    gestationalWeek: 16,
-  }
-];
+import { AuthScreen } from './components/AuthScreen';
+import { NewBabyOnboarding } from './components/NewBabyOnboarding';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { enxovalService } from './services/enxovalService';
 
 export function App() {
-  // Baby Profiles State
-  const [babies, setBabies] = useState<BabyProfile[]>(() => {
-    const saved = localStorage.getItem('enxoval_babies');
-    return saved ? JSON.parse(saved) : DEFAULT_BABIES;
+  // Auth state
+  const [currentUser, setCurrentUser] = useState<{ id: string; email?: string; name?: string } | null>(() => {
+    const saved = localStorage.getItem('enxoval_current_user');
+    return saved ? JSON.parse(saved) : null;
   });
-  const [selectedBabyId, setSelectedBabyId] = useState<string>(DEFAULT_BABIES[0].id);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
-  // Enxoval Items State
-  const [items, setItems] = useState<EnxovalItem[]>(() => {
-    const saved = localStorage.getItem('enxoval_items');
-    return saved ? JSON.parse(saved) : INITIAL_ENXOVAL_ITEMS;
-  });
+  // Baby Profiles State for current user
+  const [babies, setBabies] = useState<BabyProfile[]>([]);
+  const [selectedBabyId, setSelectedBabyId] = useState<string | null>(null);
+  const [loadingBabies, setLoadingBabies] = useState(false);
+
+  // Enxoval Items State for selected baby
+  const [items, setItems] = useState<EnxovalItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
 
   // Navigation & Modals State
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -60,19 +45,147 @@ export function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [mainFilter, setMainFilter] = useState<'all' | 'pending' | 'done'>('all');
 
+  // Supabase Auth Listener
+  useEffect(() => {
+    let mounted = true;
+
+    async function initAuth() {
+      if (isSupabaseConfigured) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (mounted && session?.user) {
+            const user = {
+              id: session.user.id,
+              email: session.user.email,
+              name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0]
+            };
+            setCurrentUser(user);
+            localStorage.setItem('enxoval_current_user', JSON.stringify(user));
+          }
+        } catch (err) {
+          console.warn('Erro ao verificar sessão Supabase:', err);
+        }
+      }
+      if (mounted) setIsAuthChecking(false);
+    }
+
+    initAuth();
+
+    if (isSupabaseConfigured) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (!mounted) return;
+        if (session?.user) {
+          const user = {
+            id: session.user.id,
+            email: session.user.email,
+            name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0]
+          };
+          setCurrentUser(user);
+          localStorage.setItem('enxoval_current_user', JSON.stringify(user));
+        } else {
+          setCurrentUser(null);
+          localStorage.removeItem('enxoval_current_user');
+          setBabies([]);
+          setItems([]);
+          setSelectedBabyId(null);
+        }
+      });
+
+      return () => {
+        mounted = false;
+        subscription.unsubscribe();
+      };
+    }
+
+    return () => { mounted = false; };
+  }, []);
+
+  // Load user's babies whenever currentUser changes
+  const loadUserBabies = useCallback(async (userId: string) => {
+    setLoadingBabies(true);
+    try {
+      const userBabies = await enxovalService.getUserBabies(userId);
+      setBabies(userBabies);
+
+      if (userBabies.length > 0) {
+        // Retrieve last selected baby or default to the first one
+        const lastSelected = localStorage.getItem(`enxoval_selected_baby_${userId}`);
+        const found = userBabies.find(b => b.id === lastSelected);
+        setSelectedBabyId(found ? found.id : userBabies[0].id);
+      } else {
+        setSelectedBabyId(null);
+      }
+    } finally {
+      setLoadingBabies(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      loadUserBabies(currentUser.id);
+    } else {
+      setBabies([]);
+      setSelectedBabyId(null);
+      setItems([]);
+    }
+  }, [currentUser?.id, loadUserBabies]);
+
+  // Current selected baby
   const currentBaby = useMemo(() => {
+    if (!selectedBabyId || babies.length === 0) return null;
     return babies.find(b => b.id === selectedBabyId) || babies[0];
   }, [babies, selectedBabyId]);
 
-  // Persist items
+  // Load items whenever selectedBabyId changes
   useEffect(() => {
-    localStorage.setItem('enxoval_items', JSON.stringify(items));
-  }, [items]);
+    let mounted = true;
+    if (!currentBaby?.id) {
+      setItems([]);
+      return;
+    }
 
-  // Persist babies
-  useEffect(() => {
-    localStorage.setItem('enxoval_babies', JSON.stringify(babies));
-  }, [babies]);
+    // Remember selected baby for this user
+    if (currentUser?.id) {
+      localStorage.setItem(`enxoval_selected_baby_${currentUser.id}`, currentBaby.id);
+    }
+
+    setLoadingItems(true);
+    enxovalService.getItems(currentBaby.id).then(babyItems => {
+      if (mounted) {
+        setItems(babyItems);
+        setLoadingItems(false);
+      }
+    });
+
+    return () => { mounted = false; };
+  }, [currentBaby?.id, currentUser?.id]);
+
+  // Handle Auth Success
+  const handleAuthSuccess = (user: { id: string; email?: string; name?: string }) => {
+    setCurrentUser(user);
+    localStorage.setItem('enxoval_current_user', JSON.stringify(user));
+    loadUserBabies(user.id);
+  };
+
+  // Sign out
+  const handleSignOut = async () => {
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut();
+    }
+    setCurrentUser(null);
+    localStorage.removeItem('enxoval_current_user');
+    setBabies([]);
+    setItems([]);
+    setSelectedBabyId(null);
+  };
+
+  // Create First Baby from Onboarding
+  const handleCreateFirstBaby = async (babyData: Omit<BabyProfile, 'id'>) => {
+    if (!currentUser) return;
+    const created = await enxovalService.createBaby(currentUser.id, babyData);
+    setBabies([created]);
+    setSelectedBabyId(created.id);
+  };
 
   // Total Global Progress Calculation
   const totalPercentage = useMemo(() => {
@@ -102,6 +215,9 @@ export function App() {
   // Update item handler
   const handleUpdateItem = (updated: EnxovalItem) => {
     setItems(prev => prev.map(it => it.id === updated.id ? updated : it));
+    if (currentBaby) {
+      enxovalService.saveItem(currentBaby.id, updated);
+    }
 
     // Celebrate if an item was completed
     if (updated.isAcquired) {
@@ -119,11 +235,15 @@ export function App() {
     setItems(prev => prev.map(item => {
       if (item.id === parentId) {
         const isAllDone = updatedSubs.every(s => s.isAcquired);
-        return {
+        const updatedItem = {
           ...item,
           subItems: updatedSubs,
           isAcquired: isAllDone
         };
+        if (currentBaby) {
+          enxovalService.saveItem(currentBaby.id, updatedItem);
+        }
+        return updatedItem;
       }
       return item;
     }));
@@ -145,23 +265,84 @@ export function App() {
       isOptional: false,
     };
     setItems(prev => [...prev, newItem]);
-  };
-
-  // Profile save
-  const handleSaveProfile = (savedBaby: BabyProfile) => {
-    if (babies.some(b => b.id === savedBaby.id)) {
-      setBabies(prev => prev.map(b => b.id === savedBaby.id ? savedBaby : b));
-    } else {
-      setBabies(prev => [...prev, savedBaby]);
-      setSelectedBabyId(savedBaby.id);
+    if (currentBaby) {
+      enxovalService.saveItem(currentBaby.id, newItem);
     }
   };
+
+  // Profile save (edit existing or add additional baby)
+  const handleSaveProfile = async (babyData: BabyProfile) => {
+    if (!currentUser) return;
+
+    if (babies.some(b => b.id === babyData.id)) {
+      // Update existing baby
+      setBabies(prev => prev.map(b => b.id === babyData.id ? babyData : b));
+      await enxovalService.updateBaby(babyData);
+    } else {
+      // Create new baby
+      const created = await enxovalService.createBaby(currentUser.id, {
+        name: babyData.name,
+        dueDate: babyData.dueDate,
+        city: babyData.city,
+        state: babyData.state,
+        gender: babyData.gender,
+        gestationalWeek: babyData.gestationalWeek
+      });
+      setBabies(prev => [...prev, created]);
+      setSelectedBabyId(created.id);
+    }
+  };
+
+  // Delete baby
+  const handleDeleteBaby = async (babyId: string) => {
+    if (!currentUser) return;
+    await enxovalService.deleteBaby(currentUser.id, babyId);
+    const remaining = babies.filter(b => b.id !== babyId);
+    setBabies(remaining);
+    setSelectedBabyId(remaining.length > 0 ? remaining[0].id : null);
+  };
+
+  // Loading Screen
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-[#FAF7FC] flex flex-col items-center justify-center">
+        <div className="w-8 h-8 border-3 border-lavender-700 border-t-transparent rounded-full animate-spin mb-3" />
+        <p className="text-xs font-semibold text-lavender-800">Carregando EnxovalFácil...</p>
+      </div>
+    );
+  }
+
+  // Not Logged In: Show Auth Screen
+  if (!currentUser) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+  }
+
+  // Logged In, but 0 babies: Show Clean Onboarding
+  if (!loadingBabies && babies.length === 0) {
+    return (
+      <NewBabyOnboarding
+        userName={currentUser.name}
+        onSaveFirstBaby={handleCreateFirstBaby}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  // Still loading babies
+  if (loadingBabies || !currentBaby) {
+    return (
+      <div className="min-h-screen bg-[#FAF7FC] flex flex-col items-center justify-center">
+        <div className="w-8 h-8 border-3 border-lavender-700 border-t-transparent rounded-full animate-spin mb-3" />
+        <p className="text-xs font-semibold text-lavender-800">Buscando bebês da sua conta...</p>
+      </div>
+    );
+  }
 
   const selectedCategory = CATEGORIES.find(c => c.id === selectedCategoryId);
 
   return (
     <div className="min-h-screen bg-[#FAF7FC] text-baby-dark">
-      {/* If a category is selected, render CategoryDetailView (IMG_6302-6317) */}
+      {/* If a category is selected, render CategoryDetailView */}
       {selectedCategory ? (
         <CategoryDetailView
           category={selectedCategory}
@@ -178,12 +359,14 @@ export function App() {
           <HeaderNav
             currentBaby={currentBaby}
             babyList={babies}
+            userName={currentUser.name}
             onSelectBaby={(b) => setSelectedBabyId(b.id)}
             onOpenAddBaby={() => setIsNewBabyOpen(true)}
             onOpenChaDeBebe={() => setIsChaDeBebeOpen(true)}
             onOpenLia={() => setIsLiaOpen(true)}
             onOpenCloset={() => setIsClosetOpen(true)}
             onOpenSearch={() => setIsSearchOpen(true)}
+            onSignOut={handleSignOut}
           />
 
           <main>
@@ -238,22 +421,28 @@ export function App() {
               </div>
 
               {/* Cards List */}
-              <div className="space-y-3">
-                {CATEGORIES.map(category => (
-                  <CategoryCard
-                    key={category.id}
-                    category={category}
-                    items={items.filter(i => i.categoryId === category.id)}
-                    onClick={() => setSelectedCategoryId(category.id)}
-                  />
-                ))}
-              </div>
+              {loadingItems ? (
+                <div className="py-12 text-center text-xs text-baby-muted">
+                  Carregando lista de itens do bebê...
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {CATEGORIES.map(category => (
+                    <CategoryCard
+                      key={category.id}
+                      category={category}
+                      items={items.filter(i => i.categoryId === category.id)}
+                      onClick={() => setSelectedCategoryId(category.id)}
+                    />
+                  ))}
+                </div>
+              )}
             </section>
           </main>
         </div>
       )}
 
-      {/* Drawer Bottom Sheet for Sub-Items (IMG_6318/6319/6320) */}
+      {/* Drawer Bottom Sheet for Sub-Items */}
       {subSheetItem && (
         <SubItemSheet
           item={subSheetItem}
@@ -266,6 +455,7 @@ export function App() {
       {isClosetOpen && (
         <ClosetModal
           babyName={currentBaby.name}
+          babyId={currentBaby.id}
           onClose={() => setIsClosetOpen(false)}
         />
       )}
@@ -293,19 +483,20 @@ export function App() {
         <ProfileModal
           currentBaby={currentBaby}
           onSave={handleSaveProfile}
+          onDelete={babies.length > 1 ? handleDeleteBaby : undefined}
           onClose={() => setIsProfileOpen(false)}
         />
       )}
 
-      {/* New Baby Modal */}
+      {/* New Baby Modal (When clicking + to add twin or next baby) */}
       {isNewBabyOpen && (
         <ProfileModal
           currentBaby={{
             id: `baby-${Date.now()}`,
             name: '',
-            dueDate: '2027-04-10',
-            city: 'São Paulo',
-            state: 'SP',
+            dueDate: new Date(Date.now() + 120 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            city: currentBaby.city,
+            state: currentBaby.state,
             gender: 'neutral',
             gestationalWeek: 20
           }}

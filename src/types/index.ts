@@ -2,6 +2,7 @@ export type Gender = 'girl' | 'boy' | 'neutral';
 
 export interface BabyProfile {
   id: string;
+  userId?: string;
   name: string;
   dueDate: string; // YYYY-MM-DD
   city: string;
